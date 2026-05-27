@@ -3,6 +3,7 @@ import string
 import binascii
 import json
 import datetime
+from CanBusLogPersistor import CanBusLogPersistor
 
 strFrameType = ""
 strFrameFormat = ""
@@ -21,6 +22,11 @@ def calculate_checksum(data):
 
 def calculate_checksumV2(data):
     return sum(data) & 0xff
+
+persistor = CanBusLogPersistor(
+    dsn="postgresql://dev:dev@localhost:5432/compensationcalculation",
+    schema="compensationcalculation"
+)
 
 #Set the CAN speed section, in this example set to 500kbps, using a variable length transceiver
 
@@ -75,7 +81,7 @@ XXset_can_baudrate = [
     0x55,     #  1  Packet header
     0x12,     #  3 Type: use variable protocol to send and receive data##  0x02- Setting (using fixed 20 byte protocol to send and receive data),   0x12- Setting (using variable protocol to send and receive data)##
     0x03,     #  3 CAN Baud Rate:  0x03 500kbps  ##  0x01(1Mbps),  0x02(800kbps),  0x03(500kbps),  0x04(400kbps),  0x05(250kbps),  0x06(200kbps),  0x07(125kbps),  0x08(100kbps),  0x09(50kbps),  0x0a(20kbps),  0x0b(10kbps),   0x0c(5kbps)##
-    0x02,     #  4  Frame Type: Extended Frame  ##   0x01 standard frame,   0x02 extended frame ##
+    0x01,     #  4  Frame Type: Extended Frame  ##   0x01 standard frame,   0x02 extended frame ##
     0x00,     #  5  Filter ID1
     0x00,     #  6  Filter ID2
     0x00,     #  7  Filter ID3
@@ -84,7 +90,7 @@ XXset_can_baudrate = [
     0x00,     #  10 Mask ID2
     0x00,     #  11 Mask ID3
     0x00,     #  12 Mask ID4
-    0x01,     #  13 CAN mode:  normal mode  ##   0x00 normal mode,   0x01 silent mode,   0x02 loopback mode,   0x03 loopback silent mode ##
+    0x00,     #  13 CAN mode:  normal mode  ##   0x00 normal mode,   0x01 silent mode,   0x02 loopback mode,   0x03 loopback silent mode ##
     0x01,     #  14 automatic resend:  automatic retransmission
     0x00,     #  15 Spare
     0x00,     #  16 Spare
@@ -99,70 +105,73 @@ set_can_baudrate = bytes(set_can_baudrate)
 
 #Send command to set CAN baud rate
 ser.write(set_can_baudrate)
-#print("CAN baud rate setting command sent.")
+print("CAN baud rate setting command sent.")
 print("Started..")
+print(dir(persistor))
 
-with open("data.jsonl", "a") as f:
-    # Read data from serial port
-    while True:
-        data = ser.read(2)
-        #data = ser.read(1)
-        hex_data1 = [hex(byte) for byte in data]
-        print("Frame header: "+str(hex_data1))
-        if (data[0] == 0xaa) and (data[1] & 0xc0 == 0xc0):  # frame header
-            len = data[1] & 0x0f
-            if data[1] & 0x10 == 0x00:
-                strFrameFormat = "Data Frame"
-            else:
-                strFrameFormat = "Remote Frame"
-
-            if data[1] & 0x20 == 0x00:
-                strFrameType = "Standard Frame"
-                len2 = len + 3
-            else:
-                strFrameType = "Extended Frame"
-                len2 = len + 5
-
-            data2 = ser.read(len2)
-            hex_data = [hex(byte) for byte in data2]
-            hex_data1 += hex_data
-            print("Frame: "+str(hex_data1))
-            print("Length: "+str(len))
-
-            if data2[len2 - 1] == 0x55:  # end code
-                if strFrameType == "Standard Frame":
-                    id = data2[1]
-                    id <<= 8
-                    id += data2[0]
-                    strId = hex(id)
-
-                    if len > 0:
-                        CanData = hex_data[2:2 + len]
-                    else:
-                        CanData = ["No Data"]
-                else:
-                    id = data2[3]
-                    id <<= 8
-                    id += data2[2]
-                    id <<= 8
-                    id += data2[1]
-                    id <<= 8
-                    id += data2[0]
-                    strId = hex(id)
-                    if len > 0:
-                        CanData = hex_data[4:4 + len]
-                    else:
-                        CanData = ["No Data"]
-                print("Receive CAN id: " + strId + " Data:", end='')
-                print(CanData)
-                print(strFrameType + ", " + strFrameFormat)
-                print(json.dumps({"canId": strId,"data":CanData,"frameType": strFrameType,"frameFormat": strFrameFormat }))
-                f.write(json.dumps({"timeStamp":datetime.datetime.now(datetime.UTC).isoformat(),"canId": strId,"data":CanData,"frameType": strFrameType,"frameFormat": strFrameFormat }) + "\n")
-                print("--------------------------------------------------")   
-            else:
-                print("Receive Packet header Error")
+#with open("data.jsonl", "a") as f:
+#print("File opened for writing.")
+# Read data from serial port
+while True:
+    data = ser.read(2)
+    #data = ser.read(1)
+    hex_data1 = [hex(byte) for byte in data]
+    print("Frame header: "+str(hex_data1))
+    if (data[0] == 0xaa) and (data[1] & 0xc0 == 0xc0):  # frame header
+        len = data[1] & 0x0f
+        if data[1] & 0x10 == 0x00:
+            strFrameFormat = "Data Frame"
         else:
-            print("Not a valid frame header: "+str(hex_data1))       
+            strFrameFormat = "Remote Frame"
+
+        if data[1] & 0x20 == 0x00:
+            strFrameType = "Standard Frame"
+            len2 = len + 3
+        else:
+            strFrameType = "Extended Frame"
+            len2 = len + 5
+
+        data2 = ser.read(len2)
+        hex_data = [hex(byte) for byte in data2]
+        hex_data1 += hex_data
+        print("Frame: "+str(hex_data1))
+        print("Length: "+str(len))
+
+        if data2[len2 - 1] == 0x55:  # end code
+            if strFrameType == "Standard Frame":
+                id = data2[1]
+                id <<= 8
+                id += data2[0]
+                strId = hex(id)
+
+                if len > 0:
+                    CanData = hex_data[2:2 + len]
+                else:
+                    CanData = ["No Data"]
+            else:
+                id = data2[3]
+                id <<= 8
+                id += data2[2]
+                id <<= 8
+                id += data2[1]
+                id <<= 8
+                id += data2[0]
+                strId = hex(id)
+                if len > 0:
+                    CanData = hex_data[4:4 + len]
+                else:
+                    CanData = ["No Data"]
+            print("Receive CAN id: " + strId + " Data:", end='')
+            print(CanData)
+            print(strFrameType + ", " + strFrameFormat)
+            print(json.dumps({"canId": strId,"data":CanData,"frameType": strFrameType,"frameFormat": strFrameFormat }))
+            #f.write(json.dumps({"timeStamp":datetime.datetime.now(datetime.UTC).isoformat(),"canId": strId,"data":CanData,"frameType": strFrameType,"frameFormat": strFrameFormat }) + "\n")
+            persistor.add({"timeStamp":datetime.datetime.now(datetime.UTC).isoformat(),"canId": strId,"data":CanData,"frameType": strFrameType,"frameFormat": strFrameFormat })
+            print("--------------------------------------------------")   
+        else:
+            print("Receive Packet header Error")
+    else:
+        print("Not a valid frame header: "+str(hex_data1))       
 
 
 # Close serial port
